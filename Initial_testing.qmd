@@ -1,0 +1,58 @@
+---
+title: "Initial_testing"
+author: "Alan Jackson"
+format: html
+editor: source
+---
+
+##    Test reading file and posting on map
+
+```{r}
+
+# setup
+
+library(tidyverse)
+
+path <- "/home/ajackson/Dropbox/Rprojects/TrashTracker/data/"
+
+
+```
+
+```{r}
+
+#   Read in the file
+
+gpx_parsed <- XML::htmlTreeParse(file = paste0(path, "20240512.gpx"), useInternalNodes = TRUE)
+
+coords <- XML::xpathSApply(doc = gpx_parsed, path = "//trkpt", fun = XML::xmlAttrs)
+ways <- XML::xpathSApply(doc = gpx_parsed, path = "//wpt", fun = XML::xmlAttrs)
+wpt_type <- XML::xpathSApply(doc = gpx_parsed, path = "//wpt/name", fun = XML::xmlValue)
+elevation <- XML::xpathSApply(doc = gpx_parsed, path = "//wpt/ele", fun = XML::xmlValue)
+# elevation <- XML::xpathSApply(doc = gpx_parsed, path = "//trkpt/ele", fun = XML::xmlValue)
+
+df <- data.frame(
+  lat = as.numeric(ways["lat", ]),
+  lon = as.numeric(ways["lon", ]),
+  waypt = wpt_type,
+  elevation = as.numeric(elevation)
+)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
