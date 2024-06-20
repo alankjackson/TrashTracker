@@ -1,0 +1,57 @@
+---
+title: "Read data and clean up"
+author: "Alan Jackson"
+format: html
+editor: source
+---
+
+##    Read files, project, and post on map
+
+Read files in, and split into path and collection points
+Run some simple stats on collection points
+Project the data
+Create a 25 m corridor around the path
+Are there collection points outside that corridor?
+If so create 10 meter circles around them, and do a union with corridor
+Create a 5 m grid in the area
+Using 20 m mean filter, populate grid
+Contour and plot
+
+```{r}
+
+# setup
+
+library(tidyverse)
+
+path <- "/home/ajackson/Dropbox/Rprojects/TrashTracker/data/"
+
+
+```
+
+##        Read in all the files
+
+Read in files
+split
+generate stats
+
+```{r}
+
+#   Read in the files
+
+gpx_parsed <- list.files( path=paste0(path), pattern=".gpx", full.names=TRUE ) %>% 
+  map_dfr( XML::htmlTreeParse(. , useInternalNodes = TRUE))
+
+coords <- XML::xpathSApply(doc = gpx_parsed, path = "//trkpt", fun = XML::xmlAttrs)
+ways <- XML::xpathSApply(doc = gpx_parsed, path = "//wpt", fun = XML::xmlAttrs)
+wpt_type <- XML::xpathSApply(doc = gpx_parsed, path = "//wpt/name", fun = XML::xmlValue)
+elevation <- XML::xpathSApply(doc = gpx_parsed, path = "//wpt/ele", fun = XML::xmlValue)
+# elevation <- XML::xpathSApply(doc = gpx_parsed, path = "//trkpt/ele", fun = XML::xmlValue)
+
+df <- data.frame(
+  lat = as.numeric(ways["lat", ]),
+  lon = as.numeric(ways["lon", ]),
+  waypt = wpt_type,
+  elevation = as.numeric(elevation)
+)
+
+```
