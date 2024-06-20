@@ -18,11 +18,24 @@ path <- "/home/ajackson/Dropbox/Rprojects/TrashTracker/data/"
 
 ```
 
+##        Read in all the files
+
+Read files in, and split into path and collection points
+Run some simple stats on collection points
+Project the data
+Create a 25 m corridor around the path
+Are there collection points outside that corridor?
+If so create 10 meter circles around them, and do a union with corridor
+Create a 5 m grid in the area
+Using 20 m mean filter, populate grid
+Contour and plot
+
+
 ```{r}
 
-#   Read in the file
+#   Read in the files
 
-gpx_parsed <- XML::htmlTreeParse(file = paste0(path, "20240512.gpx"), useInternalNodes = TRUE)
+gpx_parsed <- XML::htmlTreeParse(file = paste0(path, "20240519.gpx"), useInternalNodes = TRUE)
 
 coords <- XML::xpathSApply(doc = gpx_parsed, path = "//trkpt", fun = XML::xmlAttrs)
 ways <- XML::xpathSApply(doc = gpx_parsed, path = "//wpt", fun = XML::xmlAttrs)
@@ -39,8 +52,34 @@ df <- data.frame(
 
 ```
 
+## plot it
+
+```{r}
+library(leaflet)
+
+leaflet() %>%
+  addTiles() %>%
+  addPolylines(data = df, lat = ~lat, lng = ~lon, color = "#000000", opacity = 0.8, weight = 3) %>% 
+  addMarkers(data=df, lat = ~lat, lng = ~lon )
+```
 
 
+##        Better plot
+
+```{r}
+
+df2 <- df %>% 
+  sf::st_as_sf(., coords=c("lat","lon"),crs=4326)
+
+
+tmap::tmap_options(basemaps="OpenStreetMap")
+tmap::tmap_mode("view") # set mode to interactive plots
+
+  tmap::tm_shape(df2) + 
+  tmap::tm_dots(size=0.05) +
+  tmap::tm_shape(df2) + 
+  tmap::tm_dots(col="red")
+```
 
 
 
