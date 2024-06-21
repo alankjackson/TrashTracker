@@ -35,7 +35,7 @@ Contour and plot
 
 #   Read in the files
 
-gpx_parsed <- XML::htmlTreeParse(file = paste0(path, "20240519.gpx"), useInternalNodes = TRUE)
+gpx_parsed <- XML::htmlTreeParse(file = paste0(path, "20240620.gpx"), useInternalNodes = TRUE)
 
 coords <- XML::xpathSApply(doc = gpx_parsed, path = "//trkpt", fun = XML::xmlAttrs)
 ways <- XML::xpathSApply(doc = gpx_parsed, path = "//wpt", fun = XML::xmlAttrs)
