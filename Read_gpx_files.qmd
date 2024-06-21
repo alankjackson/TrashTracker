@@ -38,20 +38,88 @@ generate stats
 
 #   Read in the files
 
-gpx_parsed <- list.files( path=paste0(path), pattern=".gpx", full.names=TRUE ) %>% 
-  map_dfr( XML::htmlTreeParse(. , useInternalNodes = TRUE))
+in_files <- list.files( path=paste0(path), pattern=".gpx", full.names=TRUE )
+df <- NULL
 
-coords <- XML::xpathSApply(doc = gpx_parsed, path = "//trkpt", fun = XML::xmlAttrs)
-ways <- XML::xpathSApply(doc = gpx_parsed, path = "//wpt", fun = XML::xmlAttrs)
-wpt_type <- XML::xpathSApply(doc = gpx_parsed, path = "//wpt/name", fun = XML::xmlValue)
-elevation <- XML::xpathSApply(doc = gpx_parsed, path = "//wpt/ele", fun = XML::xmlValue)
-# elevation <- XML::xpathSApply(doc = gpx_parsed, path = "//trkpt/ele", fun = XML::xmlValue)
+for (afile in in_files) {
+  print(afile)
+  
+  foo <- XML::htmlTreeParse(afile , useInternalNodes = TRUE)
+  t_coords <- XML::xpathSApply(doc = foo, path = "//trkpt", fun = XML::xmlAttrs)
+  t_datetime <- XML::xpathSApply(doc = foo, path = "//trkpt/time", fun = XML::xmlValue)
+  t_elevation <- XML::xpathSApply(doc = foo, path = "//trkpt/ele", fun = XML::xmlValue)
+  ways <- XML::xpathSApply(doc = foo, path = "//wpt", fun = XML::xmlAttrs)
+  wpt_type <- XML::xpathSApply(doc = foo, path = "//wpt/name", fun = XML::xmlValue)
+  elevation <- XML::xpathSApply(doc = foo, path = "//wpt/ele", fun = XML::xmlValue)
+  wy_datetime <- XML::xpathSApply(doc = foo, path = "//wpt/time", fun = XML::xmlValue)
+  
+  #   waypoints first
+  foo <- data.frame(
+    lat = as.numeric(ways["lat", ]),
+    lon = as.numeric(ways["lon", ]),
+    waypt = wpt_type,
+    elevation = as.numeric(elevation),
+    dt = lubridate::ymd_hms(wy_datetime)
+  )
+  
+  df <- rbind(df, foo)
+  
+  #   Now track points
+  foo <- data.frame(
+    lat = as.numeric(t_coords["lat", ]),
+    lon = as.numeric(t_coords["lon", ]),
+    waypt = NA,
+    elevation = as.numeric(t_elevation),
+    dt = lubridate::ymd_hms(t_datetime)
+  )
+  
+  df <- rbind(df, foo)
+}
 
-df <- data.frame(
-  lat = as.numeric(ways["lat", ]),
-  lon = as.numeric(ways["lon", ]),
-  waypt = wpt_type,
-  elevation = as.numeric(elevation)
-)
 
 ```
+
+```{r}
+
+#   Make some plots
+
+df %>% 
+  filter(!is.na(waypt)) %>% 
+  filter(!waypt=="glass") %>% 
+  ggplot(aes(x=waypt)) +
+  geom_bar() +
+  labs(title="May 16 - June 20 Trash Collection",
+       x="Item class")
+
+df %>% 
+  filter(!is.na(waypt)) %>% 
+  filter(!waypt=="glass") %>% 
+  filter(dt>lubridate::mdy("06/19/2024")) %>% 
+  ggplot(aes(x=waypt)) +
+  geom_bar() +
+  labs(title="June 20 Trash Collection",
+       x="Item class")
+
+```
+
+##        Map
+
+```{r}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
