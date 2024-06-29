@@ -23,6 +23,9 @@ Contour and plot
 
 library(tidyverse)
 
+googlecrs <- 4326
+Seattle <- "EPSG:2285"
+
 path <- "/home/ajackson/Dropbox/Rprojects/TrashTracker/data/"
 
 
@@ -106,8 +109,43 @@ df %>%
 
 ```{r}
 
+#   Make sf files
+
+df_sf <- sf::st_as_sf(df, coords=c("lat","lon"), crs=googlecrs)
+
+#   Project to UTM
+
+df_utm <- sf::st_transform(df_sf, Seattle)
+
+
+
+
 ```
 
+##### Reprex
+
+```{r}
+library(tidyverse)
+
+googlecrs <- 4326
+Seattle <- "EPSG:2285"
+Seattle <- "EPSG:32610"
+
+df_test <- tribble( ~lat,       ~lon,    ~waypt,
+ 47.66206, -122.3062,     "Misc",  
+ 47.66186, -122.3066,  "plastic",  
+ 47.66170, -122.3064,  "plastic",  
+ 47.66205, -122.3062, "paper ff",  
+ 47.66168, -122.3067,  "plastic",  
+ 47.66203, -122.3062,     "mask"  
+)
+
+df_sf_test <- sf::st_as_sf(df_test, coords=c("lon","lat"), crs=googlecrs)
+
+sf::st_transform(df_sf_test, crs=Seattle)
+
+
+```
 
 
 
