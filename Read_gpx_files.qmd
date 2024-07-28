@@ -79,6 +79,9 @@ for (afile in in_files) {
   df <- rbind(df, foo)
 }
 
+df <- df %>% 
+  arrange(dt) %>% 
+  mutate(Date=as.character(date(dt)))
 
 ```
 
@@ -91,7 +94,7 @@ df %>%
   filter(!waypt=="glass") %>% 
   ggplot(aes(x=waypt)) +
   geom_bar() +
-  labs(title="May 16 - June 20 Trash Collection",
+  labs(title="May 16 - June 26 Trash Collection",
        x="Item class")
 
 df %>% 
@@ -100,7 +103,7 @@ df %>%
   filter(dt>lubridate::mdy("06/19/2024")) %>% 
   ggplot(aes(x=waypt)) +
   geom_bar() +
-  labs(title="June 20 Trash Collection",
+  labs(title="June 20 - July 26 Trash Collection",
        x="Item class")
 
 ```
@@ -109,15 +112,66 @@ df %>%
 
 ```{r}
 
+#   distance function
+
+Eucl <- function(x1, x2, y1, y2){sqrt((x1-x2)**2 + (y1-y2)**2)}
+
 #   Make sf files
 
-df_sf <- sf::st_as_sf(df, coords=c("lat","lon"), crs=googlecrs)
+df_sf <- sf::st_as_sf(df, coords=c("lon","lat"), crs=googlecrs)
 
 #   Project to UTM
 
-df_utm <- sf::st_transform(df_sf, Seattle)
+df_utm <- sf::st_transform(df_sf, crs=Seattle)
 
+df_utm <-
+  df_utm %>% 
+  mutate(X=sf::st_coordinates(.)[,1],
+         Y=sf::st_coordinates(.)[,2]) %>% 
+  mutate(Distance_L=Eucl(lag(X, default=first(X)), X, # left distance
+                       lag(Y, default=first(Y)), Y)) %>% 
+  mutate(Distance_R=Eucl(lead(X, default=last(X)), X, # right distance
+                       lead(Y, default=last(Y)), Y)) %>% 
+  mutate(Delta_dist=pmin(Distance_L, Distance_R))
 
+#   Spike filter
+
+Spike <- 500 # Delta_dist threshhold for declaring a spike (feet)
+
+for (i in 1:nrow(df_utm)) {
+  if (df_utm[i,]$Delta_dist>600) {
+    NewX <- (df_utm[i-1,]$X + df_utm[i+1,]$X)/2
+    NewY <- (df_utm[i-1,]$Y + df_utm[i+1,]$Y)/2
+    new_point <- sf::st_point(c(NewX, NewY)) %>% 
+                 sf::st_sfc(crs = Seattle)
+    df_utm[i,]$geometry <- sf::st_sfc(sf::st_geometry(new_point))
+  }
+}
+
+#   Turn into a set of lines
+
+l <- df_utm %>% 
+  group_by(Date) %>% 
+  summarize(do_union=FALSE) %>% 
+  sf::st_cast("LINESTRING")
+
+#   Smooth
+
+ls <- smoothr::smooth(sf::st_geometry(l), method = "ksmooth",
+                      smoothness=10)
+
+#   Plot th results
+
+l %>% 
+  ggplot() +
+  geom_sf(aes(color="red")) +
+  geom_sf(data=ls)
+
+# Note that segmentize doesn't slice a line
+# Instead, it seems to just increases the number of vertices
+sls <- st_segmentize(ls, 50)
+slsp <- st_cast(sls, "POINT")
+plot(st_geometry(slsp), col = cols, main = "segmented line vertices")
 
 
 ```
