@@ -1,0 +1,23 @@
+---
+title: "Eraseme"
+format: html
+editor: visual
+---
+
+##   driving data
+
+https://www.allstatenewsroom.com/news/bestdrivers2024/
+
+```{r}
+
+library(tidyverse)
+
+eraseme <- read_csv("/home/ajackson/Driving.csv")
+
+eraseme %>% 
+  ggplot(aes(x=High_Speed, y=Phone)) +
+  geom_point() +
+  geom_smooth(method='lm', formula= y~x)
+
+```
+
