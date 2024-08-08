@@ -10,6 +10,8 @@ editor: source
 Read files in, and split into path and collection points
 Run some simple stats on collection points
 Project the data
+Despike
+Create a smooth path
 Create a 25 m corridor around the path
 Are there collection points outside that corridor?
 If so create 10 meter circles around them, and do a union with corridor
@@ -128,6 +130,8 @@ df_utm <-
   df_utm %>% 
   mutate(X=sf::st_coordinates(.)[,1],
          Y=sf::st_coordinates(.)[,2]) %>% 
+  mutate(Dx=lag(X, default=first(X)) - X,
+         Dy=lag(Y, default=first(Y)) - Y) %>% 
   mutate(Distance_L=Eucl(lag(X, default=first(X)), X, # left distance
                        lag(Y, default=first(Y)), Y)) %>% 
   mutate(Distance_R=Eucl(lead(X, default=last(X)), X, # right distance
@@ -148,6 +152,28 @@ for (i in 1:nrow(df_utm)) {
   }
 }
 
+#   Vector smoothing - get orientation, median filter, flag 30 degree segments,
+#                       do linear fit per segment, project points onto line
+
+Thresh <- (30/360)*2*pi # thirty degrees in radians
+
+df_new <- df_utm %>% 
+  group_by(Date) %>% 
+    mutate(Theta=atan2(Dy,Dx),
+           Seg=as.integer(Theta/Thresh)) %>% # classifier every 30 degrees (-5 to 5)
+    # mutate(Med=zoo::rollmedian(Seg, 3, fill=nth(Seg,2))) #%>% 
+    mutate(Med=zoo::rollmedian(Seg, 3, 
+                               fill=c(nth(Seg,2), NA, nth(Seg, -2)))) %>% 
+    mutate(Med2=zoo::rollmedian(Med, 5, 
+                                fill=c(nth(Med,3), nth(Med,3), nth(Med,-3), 
+                                       nth(Med,-3), nth(Med, -3)))) %>% 
+  ungroup() %>% 
+  mutate(case_when(
+    
+  ))
+
+
+
 #   Turn into a set of lines
 
 l <- df_utm %>% 
@@ -160,18 +186,28 @@ l <- df_utm %>%
 ls <- smoothr::smooth(sf::st_geometry(l), method = "ksmooth",
                       smoothness=10)
 
-#   Plot th results
+#   Plot the results
 
 l %>% 
   ggplot() +
   geom_sf(aes(color="red")) +
   geom_sf(data=ls)
 
-# Note that segmentize doesn't slice a line
-# Instead, it seems to just increases the number of vertices
-sls <- st_segmentize(ls, 50)
-slsp <- st_cast(sls, "POINT")
-plot(st_geometry(slsp), col = cols, main = "segmented line vertices")
+#   Make a prettier map of path
+
+tmap::tmap_options(basemaps="OpenStreetMap")
+
+tmap::tmap_mode("view") # set mode to interactive plots
+
+tmap::tm_shape(l) +
+  tmap::tm_lines()
+
+
+# # Note that segmentize doesn't slice a line
+# # Instead, it seems to just increases the number of vertices
+# sls <- st_segmentize(ls, 50)
+# slsp <- st_cast(sls, "POINT")
+# plot(st_geometry(slsp), col = cols, main = "segmented line vertices")
 
 
 ```
