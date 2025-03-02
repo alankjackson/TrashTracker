@@ -1,7 +1,13 @@
 ---
-title: "Initial_testing"
+title: "Initial testing for Trash Tracker"
 author: "Alan Jackson"
 format: html
+description: "Tracking Litter using a phone app, and mapping the results"
+date: "8/14/2024"
+image: "cover.png"
+categories:
+  - Mapping
+  - Supporting Activism
 editor: source
 ---
 
@@ -69,7 +75,7 @@ leaflet() %>%
 ```{r}
 
 df2 <- df %>% 
-  sf::st_as_sf(., coords=c("lat","lon"),crs=4326)
+  sf::st_as_sf(., coords=c("lon","lat"),crs=4326)
 
 
 tmap::tmap_options(basemaps="OpenStreetMap")
