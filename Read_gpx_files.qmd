@@ -28,7 +28,7 @@ library(tidyverse)
 googlecrs <- 4326
 Seattle <- "EPSG:2285"
 
-path <- "/home/ajackson/Dropbox/Rprojects/TrashTracker/data/"
+path <- "/home/ajackson/Dropbox/Rprojects/TrashTracker/dataSeattle/"
 
 
 ```
@@ -105,7 +105,7 @@ df %>%
   filter(dt>lubridate::mdy("06/19/2024")) %>% 
   ggplot(aes(x=waypt)) +
   geom_bar() +
-  labs(title="June 20 - July 26 Trash Collection",
+  labs(title="June 20 - September 30 2024 Trash Collection",
        x="Item class")
 
 ```
@@ -140,10 +140,10 @@ df_utm <-
 
 #   Spike filter
 
-Spike <- 500 # Delta_dist threshhold for declaring a spike (feet)
+Spike <- 200 # Delta_dist threshhold for declaring a spike (feet)
 
 for (i in 1:nrow(df_utm)) {
-  if (df_utm[i,]$Delta_dist>600) {
+  if (df_utm[i,]$Delta_dist>Spike) {
     NewX <- (df_utm[i-1,]$X + df_utm[i+1,]$X)/2
     NewY <- (df_utm[i-1,]$Y + df_utm[i+1,]$Y)/2
     new_point <- sf::st_point(c(NewX, NewY)) %>% 
@@ -211,6 +211,93 @@ tmap::tm_shape(l) +
 
 
 ```
+
+##    Functions
+
+```{r}
+
+###   Calculate delta distances
+
+delta_Dist <- function(df){
+  df %>% 
+  mutate(X=sf::st_coordinates(.)[,1],
+         Y=sf::st_coordinates(.)[,2]) %>% 
+  mutate(Dx=lag(X, default=first(X)) - X,
+         Dy=lag(Y, default=first(Y)) - Y) %>% 
+  mutate(Distance_L=Eucl(lag(X, default=first(X)), X, # left distance
+                       lag(Y, default=first(Y)), Y)) %>% 
+  mutate(Distance_R=Eucl(lead(X, default=last(X)), X, # right distance
+                       lead(Y, default=last(Y)), Y)) %>% 
+  mutate(Delta_dist=pmin(Distance_L, Distance_R))
+}
+
+```
+
+
+##    Work on spikes
+
+```{r}
+
+#   Find skip distances and plot
+
+#   Project to UTM
+
+df_utm <- sf::st_transform(df_sf, crs=Seattle)
+
+df_utm <- delta_Dist(df_utm)
+
+df_utm %>% sf::st_drop_geometry() %>% 
+  filter(Distance_L>100) %>% 
+  ggplot(aes(x=Distance_L)) +
+  geom_histogram()
+
+df_utm %>% sf::st_drop_geometry() %>% 
+  filter(Delta_dist>100) %>%
+  mutate(LogDelta=log(Delta_dist)) %>% 
+  ggplot(aes(x=Delta_dist)) +
+  # ggplot(aes(x=LogDelta)) +
+  geom_histogram()
+
+#   Spike filter
+
+Spike <- 100 # Delta_dist threshhold for declaring a spike (feet)
+
+for (i in 1:nrow(df_utm)) {
+  if (df_utm[i,]$Delta_dist>Spike) {
+    NewX <- (df_utm[i-1,]$X + df_utm[i+1,]$X)/2
+    NewY <- (df_utm[i-1,]$Y + df_utm[i+1,]$Y)/2
+    new_point <- sf::st_point(c(NewX, NewY)) %>% 
+                 sf::st_sfc(crs = Seattle)
+    df_utm[i,]$geometry <- sf::st_sfc(sf::st_geometry(new_point))
+  }
+}
+
+#   Turn into a set of lines
+
+l <- df_utm %>% 
+  group_by(Date) %>% 
+  summarize(do_union=FALSE) %>% 
+  sf::st_cast("LINESTRING")
+
+#   Make a prettier map of path
+
+tmap::tmap_options(basemaps="OpenStreetMap")
+
+tmap::tmap_mode("view") # set mode to interactive plots
+
+tmap::tm_shape(l) +
+  tmap::tm_lines()
+
+df_utm <- delta_Dist(df_utm)
+
+df_utm %>% sf::st_drop_geometry() %>% 
+  filter(Delta_dist>100) %>%
+  ggplot(aes(x=Delta_dist)) +
+  geom_histogram()
+
+```
+
+
 
 ##### Reprex
 
