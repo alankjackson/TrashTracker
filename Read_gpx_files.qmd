@@ -33,6 +33,81 @@ path <- "/home/ajackson/Dropbox/Rprojects/TrashTracker/dataSeattle/"
 
 ```
 
+##    Functions
+
+```{r}
+
+
+#   distance function
+
+Eucl <- function(x1, x2, y1, y2){sqrt((x1-x2)**2 + (y1-y2)**2)}
+
+#     Delta dist
+
+delta_Dist <- function(df){
+  df %>% 
+    mutate(X=sf::st_coordinates(.)[,1],
+           Y=sf::st_coordinates(.)[,2]) %>% 
+    group_by(Date) %>% 
+      mutate(Xtest=(lag(X, default=first(X)) + lead(X, default=last(X)))/2) %>% 
+      mutate(Ytest=(lag(Y, default=first(Y)) + lead(Y, default=last(Y)))/2) %>% 
+      mutate(Dx=Xtest - X,
+             Dy=Ytest - Y) %>% 
+      mutate(Delta_dist=Eucl(Xtest, X, Ytest, Y)) %>% 
+      mutate(New_dist=Eucl(lag(X, default=first(X)), lead(X, default=last(X)), 
+                           lag(Y, default=first(Y)), lead(Y, default=last(Y)))) %>% 
+    ungroup()
+}
+
+###   Kalman filter
+
+# Kalman <- function(day) {
+Kalman <- function(X, Y, varM, varP) {
+  #initializing variables
+  # count <- nrow(day) # number of data points in the day
+  count <- length(X) # number of data points in the day
+  print(paste("K-1", count))
+  # z <- cbind(day$X,day$Y) #measurements
+  z <- cbind(X,Y) #measurements
+  #Allocate space:
+  xhat <- matrix(rep(0,2*count),ncol =2) #a posteri estimate at each step
+  P <- array(0,dim=c(2,2,count))  #a posteri error estimate
+  xhatminus <- matrix(rep(0,2*count),ncol =2) #a priori estimate
+  Pminus <- array(0,dim=c(2,2,count)) #a priori error estimate
+  K <- array(0,dim=c(2,2,count)) #gain
+  #Initializing matrices
+  A <-diag(2)
+  H<-diag(2)
+  # R<-function(k) diag(2)* day$accuracy[k]^2#estimate of measurement variance
+  R<-function(k) diag(2)* varM[k] #estimate of measurement variance
+  # Q<-function(k) diag(2)* as.numeric(day$timeNextMeasure[k])^1.5# the process variance
+  Q<-function(k) diag(2)* varP[k] # the process variance
+  #initialise guesses:
+  xhat[1,] <- z[1,]
+  P[,,1] <- diag(2)
+  for (k in 2:count){
+    #time update
+    #project state ahead
+    xhatminus[k,] <- A %*% xhat[k-1,] #+ B %% u[k-1]
+    #project error covariance ahead
+    Pminus[,,k] <- A %*% P[,,k-1] %*%  t(A) + (Q(k))
+    #measurement update
+    # kalman gain
+    K[,,k] <- Pminus[,,k] %*% t(H)/ (H %*% Pminus[,,k] %*% t(H) + R(k))
+    #what if NaaN?
+    K[,,k][which(is.nan(K[,,k]))]<-0
+    # update estimate with measurement
+    
+    xhat[k,] <-  xhatminus[k,] + K[,,k] %*% (z[k,] - H %*% xhatminus[k,])
+    #update error covariance
+    P[,,k] = (diag(2) - K[,,k]%*% H) %*% Pminus[,,k]
+  }
+  return(as.data.frame(xhat) %>% rename(X2=V1, Y2=V2))
+  # cbind(day, as.data.frame(xhat) %>% rename(X2=V1, Y2=V2))
+}
+
+```
+
 ##        Read in all the files
 
 Read in files
@@ -114,69 +189,43 @@ df %>%
 
 ```{r}
 
-#   distance function
+#   add geohash
 
-Eucl <- function(x1, x2, y1, y2){sqrt((x1-x2)**2 + (y1-y2)**2)}
+# df$Geohash <- geohash::gh_encode(df$lon, df$lat, 12)
+df$Geohash <- paste(df$lon, df$lat)
 
-#   Make sf files
-
-df_sf <- sf::st_as_sf(df, coords=c("lon","lat"), crs=googlecrs)
+df_sf <- df %>%
+  group_by(Date, Geohash) %>%
+    summarize(Date=first(Date),
+              lat=first(lat),
+              lon=first(lon),
+              dt=first(dt),
+              elevation=first(elevation),
+              num=n(),
+              waypt=list(waypt)) %>%
+  sf::st_as_sf(coords=c("lon","lat"), crs=googlecrs) %>% 
+  ungroup()
 
 #   Project to UTM
 
 df_utm <- sf::st_transform(df_sf, crs=Seattle)
 
-df_utm <-
-  df_utm %>% 
-  mutate(X=sf::st_coordinates(.)[,1],
-         Y=sf::st_coordinates(.)[,2]) %>% 
-  mutate(Dx=lag(X, default=first(X)) - X,
-         Dy=lag(Y, default=first(Y)) - Y) %>% 
-  mutate(Distance_L=Eucl(lag(X, default=first(X)), X, # left distance
-                       lag(Y, default=first(Y)), Y)) %>% 
-  mutate(Distance_R=Eucl(lead(X, default=last(X)), X, # right distance
-                       lead(Y, default=last(Y)), Y)) %>% 
-  mutate(Delta_dist=pmin(Distance_L, Distance_R))
+#   Some stats
 
-#   Spike filter
-
-Spike <- 200 # Delta_dist threshhold for declaring a spike (feet)
-
-for (i in 1:nrow(df_utm)) {
-  if (df_utm[i,]$Delta_dist>Spike) {
-    NewX <- (df_utm[i-1,]$X + df_utm[i+1,]$X)/2
-    NewY <- (df_utm[i-1,]$Y + df_utm[i+1,]$Y)/2
-    new_point <- sf::st_point(c(NewX, NewY)) %>% 
-                 sf::st_sfc(crs = Seattle)
-    df_utm[i,]$geometry <- sf::st_sfc(sf::st_geometry(new_point))
-  }
-}
-
-#   Vector smoothing - get orientation, median filter, flag 30 degree segments,
-#                       do linear fit per segment, project points onto line
-
-Thresh <- (30/360)*2*pi # thirty degrees in radians
-
-df_new <- df_utm %>% 
+df_utm %>% 
+  sf::st_drop_geometry() %>% 
   group_by(Date) %>% 
-    mutate(Theta=atan2(Dy,Dx),
-           Seg=as.integer(Theta/Thresh)) %>% # classifier every 30 degrees (-5 to 5)
-    # mutate(Med=zoo::rollmedian(Seg, 3, fill=nth(Seg,2))) #%>% 
-    mutate(Med=zoo::rollmedian(Seg, 3, 
-                               fill=c(nth(Seg,2), NA, nth(Seg, -2)))) %>% 
-    mutate(Med2=zoo::rollmedian(Med, 5, 
-                                fill=c(nth(Med,3), nth(Med,3), nth(Med,-3), 
-                                       nth(Med,-3), nth(Med, -3)))) %>% 
+    mutate(Dist=Eucl(lag(X, default=first(X)), X, 
+                     lag(Y, default=first(Y)), Y)) %>% 
   ungroup() %>% 
-  mutate(case_when(
-    
-  ))
-
-
+  filter(Dist<500) %>% 
+  ggplot(aes(x=Dist)) +
+    geom_histogram()
 
 #   Turn into a set of lines
 
 l <- df_utm %>% 
+  arrange(dt) %>% 
   group_by(Date) %>% 
   summarize(do_union=FALSE) %>% 
   sf::st_cast("LINESTRING")
@@ -202,37 +251,6 @@ tmap::tmap_mode("view") # set mode to interactive plots
 tmap::tm_shape(l) +
   tmap::tm_lines()
 
-
-# # Note that segmentize doesn't slice a line
-# # Instead, it seems to just increases the number of vertices
-# sls <- st_segmentize(ls, 50)
-# slsp <- st_cast(sls, "POINT")
-# plot(st_geometry(slsp), col = cols, main = "segmented line vertices")
-
-
-```
-
-##    Functions
-
-```{r}
-
-###   Calculate delta distances
-
-delta_Dist <- function(df){
-  df %>% 
-    group_by(Date) %>% 
-      mutate(X=sf::st_coordinates(.)[,1],
-             Y=sf::st_coordinates(.)[,2]) %>% 
-      mutate(Dx=lag(X, default=first(X)) - X,
-             Dy=lag(Y, default=first(Y)) - Y) %>% 
-      mutate(Distance_L=Eucl(lag(X, default=first(X)), X, # left distance
-                           lag(Y, default=first(Y)), Y)) %>% 
-      mutate(Distance_R=Eucl(lead(X, default=last(X)), X, # right distance
-                           lead(Y, default=last(Y)), Y)) %>% 
-      mutate(Delta_dist=pmin(Distance_L, Distance_R)) %>% 
-    ungroup()
-}
-
 ```
 
 
@@ -246,6 +264,27 @@ delta_Dist <- function(df){
 
 df_utm <- sf::st_transform(df_sf, crs=Seattle)
 
+#     Eliminate duplicate coordinate points that have no trash
+
+df_utm <- df_utm %>%     
+  arrange(dt) %>% 
+  mutate(X=sf::st_coordinates(.)[,1],
+         Y=sf::st_coordinates(.)[,2]) 
+
+#   Turn into a set of lines
+
+l <- df_utm %>% 
+  group_by(Date) %>% 
+  summarize(do_union=FALSE) %>% 
+  sf::st_cast("LINESTRING")
+
+tmap::tmap_options(basemaps="OpenStreetMap")
+
+tmap::tmap_mode("view") # set mode to interactive plots
+
+tmap::tm_shape(l) +
+  tmap::tm_lines()
+
 df_utm2 <- delta_Dist(df_utm)
 
 df_utm2 %>% 
@@ -255,8 +294,10 @@ df_utm2 %>%
 
 #   Big deltas
 
+Spike_pct <- 0.8
+
 df_delta <- df_utm2 %>% 
-  filter(Delta_dist>50) %>% 
+  filter(Delta_dist>Spike_pct*New_dist) %>% 
   select(Delta_dist, Date, geometry) %>% 
   sf::st_as_sf()
 
@@ -264,13 +305,11 @@ df_utm3 <- df_utm2 %>%
   group_by(Date) %>% 
     mutate(NewX=(lag(X, default=first(X)) + lead(X, default=last(X)))/2) %>% 
     mutate(NewY=(lag(Y, default=first(Y)) + lead(Y, default=last(Y)))/2) %>% 
-  ungroup()
+  ungroup() %>% 
+  arrange(dt)
 
 for (i in 1:nrow(df_utm3)) {
-  if (df_utm3[i,]$Delta_dist>Spike) {
-    # NewX <- (df_utm2[i-1,]$X + df_utm2[i+1,]$X)/2
-    # NewY <- (df_utm2[i-1,]$Y + df_utm2[i+1,]$Y)/2
-    # new_point <- sf::st_point(c(NewX, NewY)) %>% 
+  if (df_utm3[i,]$Delta_dist>Spike_pct*df_utm3[i,]$New_dist) {
     new_point <- sf::st_point(c(df_utm3[i,]$NewX, df_utm3[i,]$NewY)) %>% 
                  sf::st_sfc(crs = Seattle)
     df_utm3[i,]$geometry <- sf::st_sfc(sf::st_geometry(new_point))
@@ -278,7 +317,8 @@ for (i in 1:nrow(df_utm3)) {
 }
 
 df_delta_after <- df_utm3 %>% 
-  filter(Delta_dist>50) %>% 
+  filter(Delta_dist>Spike_pct*New_dist) %>% 
+  # filter(Delta_dist>30) %>% 
   select(Delta_dist, Date, geometry) %>% 
   sf::st_as_sf()
 
@@ -291,8 +331,8 @@ l <- df_utm3 %>%
 
 #   Smooth
 
-ls <- smoothr::smooth(sf::st_geometry(l), method = "ksmooth",
-                      smoothness=10)
+# ls <- smoothr::smooth(sf::st_geometry(l), method = "ksmooth",
+#                       smoothness=10)
 #   Make a prettier map of path
 
 tmap::tmap_options(basemaps="OpenStreetMap")
@@ -301,10 +341,10 @@ tmap::tmap_mode("view") # set mode to interactive plots
 
 tmap::tm_shape(l) +
   tmap::tm_lines() +
-tmap::tm_shape(ls) +
-  tmap::tm_lines(col="blue") +
+# tmap::tm_shape(ls) +
+#   tmap::tm_lines(col="blue") +
 tmap::tm_shape(df_delta) +
-  tmap::tm_dots(fill="red", size=0.5)+
+  tmap::tm_dots(fill="red", size=0.5, popup.vars="Delta_dist")+
 tmap::tm_shape(df_delta_after) +
   tmap::tm_dots(fill="green", size=0.5)
 
@@ -321,59 +361,6 @@ df_utm2 %>% sf::st_drop_geometry() %>%
   ggplot(aes(x=Delta_dist)) +
   # ggplot(aes(x=LogDelta)) +
   geom_histogram()
-#############################################################################
-#   Spike filter
-
-# Spike <- 100 # Delta_dist threshhold for declaring a spike (feet)
-# 
-# df_utm3 <- df_utm2 %>% 
-#   group_by(Date) %>% 
-#     mutate(NewX=(lag(X, default=first(X)) + lead(X, default=last(X)))/2) %>% 
-#     mutate(NewY=(lag(Y, default=first(Y)) + lead(Y, default=last(Y)))/2) %>% 
-#   ungroup()
-# 
-# for (i in 1:nrow(df_utm3)) {
-#   if (df_utm3[i,]$Delta_dist>Spike) {
-#     # NewX <- (df_utm2[i-1,]$X + df_utm2[i+1,]$X)/2
-#     # NewY <- (df_utm2[i-1,]$Y + df_utm2[i+1,]$Y)/2
-#     # new_point <- sf::st_point(c(NewX, NewY)) %>% 
-#     new_point <- sf::st_point(c(df_utm3[i,]$NewX, df_utm3[i,]$NewY)) %>% 
-#                  sf::st_sfc(crs = Seattle)
-#     df_utm3[i,]$geometry <- sf::st_sfc(sf::st_geometry(new_point))
-#   }
-# }
-# 
-# #   Big deltas
-# 
-# df_delta <- df_utm2 %>% 
-#   filter(Delta_dist>100) %>% 
-#   select(Delta_dist, Date, geometry) %>% 
-#   sf::st_as_sf()
-# 
-# #   Turn into a set of lines
-# 
-# l <- df_utm3 %>% 
-#   group_by(Date) %>% 
-#   summarize(do_union=FALSE) %>% 
-#   sf::st_cast("LINESTRING")
-# 
-# #   Make a prettier map of path
-# 
-# tmap::tmap_options(basemaps="OpenStreetMap")
-# 
-# tmap::tmap_mode("view") # set mode to interactive plots
-# 
-# tmap::tm_shape(l) +
-#   tmap::tm_lines() +
-# tmap::tm_shape(df_delta) +
-#   tmap::tm_dots(fill="red", size=0.5)
-# 
-# df_utm2 <- delta_Dist(df_utm)
-# 
-# df_utm2 %>% sf::st_drop_geometry() %>% 
-#   filter(Delta_dist>100) %>%
-#   ggplot(aes(x=Delta_dist)) +
-#   geom_histogram()
 
 ```
 
@@ -385,111 +372,51 @@ https://bookdown.org/probability/bookdown-demo/kalman-filters.html
 
 https://maddevs.io/blog/reduce-gps-data-error-on-android-with-kalman-filter-and-accelerometer/
 
+##    Apply Kalman filter
+
 ```{r}
 
-day <- df_utm3 %>% 
-  filter(Date=="2024-05-16")
+foo <- df_utm3 %>% 
+  filter(Date=="2024-05-16") %>% 
+  mutate(X=sf::st_coordinates(.)[,1],
+         Y=sf::st_coordinates(.)[,2]) %>% 
+  sf::st_drop_geometry() %>% 
+    mutate(a=Kalman(X,Y))  
 
-#initializing variables
-count <- nrow(day) # number of data points in the day
-z <- cbind(day$X,day$Y) #measurements
-#Allocate space:
-xhat <- matrix(rep(0,2*count),ncol =2) #a posteri estimate at each step
-P <- array(0,dim=c(2,2,count))  #a posteri error estimate
-xhatminus <- matrix(rep(0,2*count),ncol =2) #a priori estimate
-Pminus <- array(0,dim=c(2,2,count)) #a priori error estimate
-K <- array(0,dim=c(2,2,count)) #gain
-#Initializing matrices
-A <-diag(2)
-H<-diag(2)
-# R<-function(k) diag(2)* day$accuracy[k]^2#estimate of measurement variance
-R<-function(k) diag(2)* 50 #estimate of measurement variance
-# Q<-function(k) diag(2)* as.numeric(day$timeNextMeasure[k])^1.5# the process variance
-Q<-function(k) diag(2)* 50 # the process variance
-#initialise guesses:
-xhat[1,] <- z[1,]
-P[,,1] <- diag(2)
-for (k in 2:count){
-  #time update
-  #project state ahead
-  xhatminus[k,] <- A %*% xhat[k-1,] #+ B %% u[k-1]
-  #project error covariance ahead
-  Pminus[,,k] <- A %*% P[,,k-1] %*%  t(A) + (Q(k))
-  #measurement update
-  # kalman gain
-  K[,,k] <- Pminus[,,k] %*% t(H)/ (H %*% Pminus[,,k] %*% t(H) + R(k))
-  #what if NaaN?
-  K[,,k][which(is.nan(K[,,k]))]<-0
-  # update estimate with measurement
-  
-  xhat[k,] <-  xhatminus[k,] + K[,,k] %*% (z[k,] - H %*% xhatminus[k,])
-  #update error covariance
-  P[,,k] = (diag(2) - K[,,k]%*% H) %*% Pminus[,,k]
-}
+df_kal <- df_utm3 %>% 
+  mutate(X=sf::st_coordinates(.)[,1],
+         Y=sf::st_coordinates(.)[,2]) %>% 
+  sf::st_drop_geometry() %>% 
+  group_by(Date) %>% 
+    mutate(a=Kalman(X,Y, Delta_dist/num, New_dist)) %>% 
+    mutate(X2=a$X2,
+           Y2=a$Y2) %>% 
+  ungroup()
 
-l1 <- day %>% 
+df_kal <- df_kal %>% 
+  sf::st_drop_geometry() %>% 
+  sf::st_as_sf(coords=c("X2", "Y2"), crs=Seattle)
+
+l2 <- df_kal %>% 
   group_by(Date) %>% 
   summarize(do_union=FALSE) %>% 
   sf::st_cast("LINESTRING")
-
-New <- as.data.frame(xhat) %>% 
-  sf::st_as_sf(coords=c("V1", "V2"), crs=Seattle)
-
-l2 <- New %>% 
-  summarize(do_union=FALSE) %>%
-  sf::st_cast("LINESTRING")
-
-
 
 tmap::tmap_options(basemaps="OpenStreetMap")
 
 tmap::tmap_mode("view") # set mode to interactive plots
 
-tmap::tm_shape(l1) +
-  tmap::tm_lines() +
+tmap::tm_shape(l) +
+  tmap::tm_lines(popup.vars=c("Date")) +
 tmap::tm_shape(l2) +
-  tmap::tm_lines(col="red") +
-tmap::tm_shape(New) +
-  tmap::tm_dots(fill="red") 
-
+  tmap::tm_lines(col="red",popup.vars=c("Date")) 
+# tmap::tm_shape(ls) +
+#   tmap::tm_lines(col="blue") +
+# tmap::tm_shape(df_delta) +
+#   tmap::tm_dots(fill="red", size=0.5)+
+# tmap::tm_shape(df_delta_after) +
+#   tmap::tm_dots(fill="green", size=0.5)
 ```
-
-
-##### Reprex
-
-```{r}
-library(tidyverse)
-
-googlecrs <- 4326
-Seattle <- "EPSG:2285"
-Seattle <- "EPSG:32610"
-
-df_test <- tribble( ~lat,       ~lon,    ~waypt,
- 47.66206, -122.3062,     "Misc",  
- 47.66186, -122.3066,  "plastic",  
- 47.66170, -122.3064,  "plastic",  
- 47.66205, -122.3062, "paper ff",  
- 47.66168, -122.3067,  "plastic",  
- 47.66203, -122.3062,     "mask"  
-)
-
-df_sf_test <- sf::st_as_sf(df_test, coords=c("lon","lat"), crs=googlecrs)
-
-sf::st_transform(df_sf_test, crs=Seattle)
-
-
-```
-
-
-
-
-
-
-
-
-
-
-
 
 
 
