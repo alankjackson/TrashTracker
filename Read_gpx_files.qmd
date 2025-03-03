@@ -376,19 +376,78 @@ https://maddevs.io/blog/reduce-gps-data-error-on-android-with-kalman-filter-and-
 
 ```{r}
 
+#   Do some tests
+
 foo <- df_utm3 %>% 
-  filter(Date=="2024-05-16") %>% 
   mutate(X=sf::st_coordinates(.)[,1],
          Y=sf::st_coordinates(.)[,2]) %>% 
   sf::st_drop_geometry() %>% 
-    mutate(a=Kalman(X,Y))  
+  select(Date, X, Y, num, Delta_dist, New_dist)
+
+get_change <- function(df1, df2) {
+  # df2 <- df2 %>% sf::st_drop_geometry() %>% select(X2, Y2)
+  df1 <- df1 %>% sf::st_drop_geometry() %>% select(X, Y)
+  foo <- cbind(df1, df2) %>% 
+    mutate(Dx=abs(X-X2), Dy=abs(Y-Y2), Delta=Eucl(X, X2, Y, Y2))  %>% 
+    select(Dx, Dy, Delta)
+  return(foo)
+}
+
+collect <- NULL
+
+for (i in c(0.2, 0.5, 1, 2, 4)) {
+  for (j in c(0.2, 0.5, 1, 2, 4)) {
+    Label <- paste(i,j, sep="_")
+    foo_k <- foo %>% 
+      group_by(Date) %>% 
+        mutate(a=Kalman(X, Y, i*Delta_dist/num, j*New_dist*3)) %>% 
+        mutate(X2=a$X2,
+               Y2=a$Y2) %>% 
+      ungroup() %>% 
+      select(X2, Y2)
+    foobar <- get_change(foo, foo_k) %>% 
+      rename(!!sym(paste0(Label,"_Dx")) := Dx,
+             !!sym(paste0(Label,"_Dy")) := Dy,
+             !!sym(paste0(Label,"_Delta")) := Delta)
+    
+    collect <- bind_cols(collect, foobar)
+    
+  }
+}
+  
+collect %>% 
+  select(ends_with("Dx")) %>% 
+  pivot_longer(cols=everything(), names_to="Name") %>% 
+  mutate(class=factor(Name)) %>% 
+  ggplot(aes(x=value)) +
+    geom_histogram() +
+    facet_wrap(~class)
+
+collect %>% 
+  select(ends_with("Dy")) %>% 
+  pivot_longer(cols=everything(), names_to="Name") %>% 
+  mutate(class=factor(Name)) %>% 
+  ggplot(aes(x=value)) +
+    geom_histogram() +
+    facet_wrap(~class)
+
+collect %>% 
+  select(ends_with("Delta")) %>% 
+  pivot_longer(cols=everything(), names_to="Name") %>% 
+  mutate(class=factor(Name)) %>% 
+  ggplot(aes(x=value)) +
+    geom_histogram() +
+    facet_wrap(~class)
+########   end testing
+
+#   run it 
 
 df_kal <- df_utm3 %>% 
   mutate(X=sf::st_coordinates(.)[,1],
          Y=sf::st_coordinates(.)[,2]) %>% 
   sf::st_drop_geometry() %>% 
   group_by(Date) %>% 
-    mutate(a=Kalman(X,Y, Delta_dist/num, New_dist)) %>% 
+    mutate(a=Kalman(X, Y, 4*Delta_dist/num, 0.5*New_dist)) %>% 
     mutate(X2=a$X2,
            Y2=a$Y2) %>% 
   ungroup()
@@ -407,15 +466,15 @@ tmap::tmap_options(basemaps="OpenStreetMap")
 tmap::tmap_mode("view") # set mode to interactive plots
 
 tmap::tm_shape(l) +
-  tmap::tm_lines(popup.vars=c("Date")) +
+  tmap::tm_lines() +
 tmap::tm_shape(l2) +
-  tmap::tm_lines(col="red",popup.vars=c("Date")) 
+  tmap::tm_lines(col="red") +
 # tmap::tm_shape(ls) +
 #   tmap::tm_lines(col="blue") +
-# tmap::tm_shape(df_delta) +
-#   tmap::tm_dots(fill="red", size=0.5)+
-# tmap::tm_shape(df_delta_after) +
-#   tmap::tm_dots(fill="green", size=0.5)
+tmap::tm_shape(df_utm3 %>% select(Date, elevation, num, waypt)) +
+  tmap::tm_dots(fill="red", size=0.5) +
+tmap::tm_shape(df_kal %>% select(Date, elevation, num, waypt)) +
+  tmap::tm_dots(fill="green", size=0.5)
 ```
 
 
