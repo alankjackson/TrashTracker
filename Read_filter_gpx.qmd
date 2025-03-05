@@ -1,0 +1,301 @@
+---
+title: "Read and Filter gpx files"
+author: "Alan Jackson"
+format: html
+editor: source
+---
+
+##    Setup
+
+```{r}
+
+# setup
+
+library(tidyverse)
+
+googlecrs <- 4326
+Seattle <- "EPSG:2285"
+Houston <- "EPSG:32643"
+
+path <- "/home/ajackson/Dropbox/Rprojects/TrashTracker/"
+
+cities <- c("Seattle", "Houston")
+
+Citypath <- "dataSeattle/"
+CityEPSG <- Seattle
+City <- "Seattle"
+
+Citypath <- "dataHouston/"
+CityEPSG <- Houston
+City <- "Houston"
+
+```
+
+##    Functions
+
+```{r}
+
+
+#   distance function
+
+Eucl <- function(x1, x2, y1, y2){sqrt((x1-x2)**2 + (y1-y2)**2)}
+
+#     Delta dist
+
+delta_Dist <- function(df){
+  df %>% 
+    mutate(X=sf::st_coordinates(.)[,1],
+           Y=sf::st_coordinates(.)[,2]) %>% 
+    group_by(Date) %>% 
+      mutate(Xtest=(lag(X, default=first(X)) + lead(X, default=last(X)))/2) %>% 
+      mutate(Ytest=(lag(Y, default=first(Y)) + lead(Y, default=last(Y)))/2) %>% 
+      mutate(Dx=Xtest - X,
+             Dy=Ytest - Y) %>% 
+      mutate(Delta_dist=Eucl(Xtest, X, Ytest, Y)) %>% 
+      mutate(New_dist=Eucl(lag(X, default=first(X)), lead(X, default=last(X)), 
+                           lag(Y, default=first(Y)), lead(Y, default=last(Y)))/2) %>% 
+    ungroup()
+}
+
+###   Kalman filter
+
+# Kalman <- function(day) {
+Kalman <- function(X, Y, varM, varP) {
+  #initializing variables
+  # count <- nrow(day) # number of data points in the day
+  count <- length(X) # number of data points in the day
+  print(paste("K-1", count))
+  # z <- cbind(day$X,day$Y) #measurements
+  z <- cbind(X,Y) #measurements
+  #Allocate space:
+  xhat <- matrix(rep(0,2*count),ncol =2) #a posteri estimate at each step
+  P <- array(0,dim=c(2,2,count))  #a posteri error estimate
+  xhatminus <- matrix(rep(0,2*count),ncol =2) #a priori estimate
+  Pminus <- array(0,dim=c(2,2,count)) #a priori error estimate
+  K <- array(0,dim=c(2,2,count)) #gain
+  #Initializing matrices
+  A <-diag(2)
+  H<-diag(2)
+  # R<-function(k) diag(2)* day$accuracy[k]^2#estimate of measurement variance
+  R<-function(k) diag(2)* varM[k] #estimate of measurement variance
+  # Q<-function(k) diag(2)* as.numeric(day$timeNextMeasure[k])^1.5# the process variance
+  Q<-function(k) diag(2)* varP[k] # the process variance
+  #initialise guesses:
+  xhat[1,] <- z[1,]
+  P[,,1] <- diag(2)
+  for (k in 2:count){
+    #time update
+    #project state ahead
+    xhatminus[k,] <- A %*% xhat[k-1,] #+ B %% u[k-1]
+    #project error covariance ahead
+    Pminus[,,k] <- A %*% P[,,k-1] %*%  t(A) + (Q(k))
+    #measurement update
+    # kalman gain
+    K[,,k] <- Pminus[,,k] %*% t(H)/ (H %*% Pminus[,,k] %*% t(H) + R(k))
+    #what if NaaN?
+    K[,,k][which(is.nan(K[,,k]))]<-0
+    # update estimate with measurement
+    
+    xhat[k,] <-  xhatminus[k,] + K[,,k] %*% (z[k,] - H %*% xhatminus[k,])
+    #update error covariance
+    P[,,k] = (diag(2) - K[,,k]%*% H) %*% Pminus[,,k]
+  }
+  return(as.data.frame(xhat) %>% rename(X2=V1, Y2=V2))
+  # cbind(day, as.data.frame(xhat) %>% rename(X2=V1, Y2=V2))
+}
+
+```
+
+##        Read in all the files
+
+```{r}
+
+#   Read in the files
+
+in_files <- list.files( path=paste0(path, Citypath), pattern=".gpx", full.names=TRUE )
+df <- NULL
+
+for (afile in in_files) {
+  print(afile)
+  
+  foo <- XML::htmlTreeParse(afile , useInternalNodes = TRUE)
+  t_coords <- XML::xpathSApply(doc = foo, path = "//trkpt", fun = XML::xmlAttrs)
+  t_datetime <- XML::xpathSApply(doc = foo, path = "//trkpt/time", fun = XML::xmlValue)
+  t_elevation <- XML::xpathSApply(doc = foo, path = "//trkpt/ele", fun = XML::xmlValue)
+  ways <- XML::xpathSApply(doc = foo, path = "//wpt", fun = XML::xmlAttrs)
+  wpt_type <- XML::xpathSApply(doc = foo, path = "//wpt/name", fun = XML::xmlValue)
+  elevation <- XML::xpathSApply(doc = foo, path = "//wpt/ele", fun = XML::xmlValue)
+  wy_datetime <- XML::xpathSApply(doc = foo, path = "//wpt/time", fun = XML::xmlValue)
+  
+  #   waypoints first
+  foo <- data.frame(
+    lat = as.numeric(ways["lat", ]),
+    lon = as.numeric(ways["lon", ]),
+    waypt = wpt_type,
+    elevation = as.numeric(elevation),
+    dt = lubridate::ymd_hms(wy_datetime)
+  )
+  
+  df <- rbind(df, foo)
+  
+  #   Now track points
+  foo <- data.frame(
+    lat = as.numeric(t_coords["lat", ]),
+    lon = as.numeric(t_coords["lon", ]),
+    waypt = NA,
+    elevation = as.numeric(t_elevation),
+    dt = lubridate::ymd_hms(t_datetime)
+  )
+  
+  df <- rbind(df, foo)
+}
+
+df <- df %>% 
+  arrange(dt) %>% 
+  mutate(Date=as.character(date(dt)))
+
+```
+
+##  Combine identical locations
+
+```{r}
+
+#   add geohash
+
+df$Geohash <- paste(df$lon, df$lat)
+
+df_sf <- df %>%
+  group_by(Date, Geohash) %>%
+    summarize(Date=first(Date),
+              lat=first(lat),
+              lon=first(lon),
+              dt=first(dt),
+              elevation=first(elevation),
+              num=n(),
+              waypt=paste(waypt, collapse = ",")) %>%
+              # waypt=list(waypt)) %>%
+  sf::st_as_sf(coords=c("lon","lat"), crs=googlecrs) %>% 
+  ungroup()
+
+#   Project to UTM
+
+df_utm <- sf::st_transform(df_sf, crs=CityEPSG)
+
+#   Map it to check things out
+
+l <- df_utm %>% 
+  arrange(dt) %>% 
+  group_by(Date) %>% 
+  summarize(do_union=FALSE) %>% 
+  sf::st_cast("LINESTRING")
+
+tmap::tmap_options(basemaps="OpenStreetMap")
+
+tmap::tmap_mode("view") # set mode to interactive plots
+
+tmap::tm_shape(l) +
+  tmap::tm_lines()
+
+```
+
+##    Work on spikes
+
+```{r}
+
+# pull out X-Y coordinates
+
+df_utm <- df_utm %>%     
+  arrange(dt) %>% 
+  mutate(X=sf::st_coordinates(.)[,1],
+         Y=sf::st_coordinates(.)[,2]) 
+
+#   Calculate delta distances
+
+df_utm2 <- delta_Dist(df_utm)
+
+#   despike
+
+Spike_pct <- 1.6
+
+df_utm3 <- df_utm2 %>% 
+  group_by(Date) %>% 
+    mutate(NewX=(lag(X, default=first(X)) + lead(X, default=last(X)))/2) %>% 
+    mutate(NewY=(lag(Y, default=first(Y)) + lead(Y, default=last(Y)))/2) %>% 
+  ungroup() %>% 
+  arrange(dt)
+
+for (i in 1:nrow(df_utm3)) {
+  if (df_utm3[i,]$Delta_dist>Spike_pct*df_utm3[i,]$New_dist) {
+    new_point <- sf::st_point(c(df_utm3[i,]$NewX, df_utm3[i,]$NewY)) %>% 
+                 sf::st_sfc(crs = CityEPSG)
+    df_utm3[i,]$geometry <- sf::st_sfc(sf::st_geometry(new_point))
+  }
+}
+
+```
+
+##    Apply Kalman filter
+
+```{r}
+
+df_kal <- df_utm3 %>% 
+  mutate(X=sf::st_coordinates(.)[,1],
+         Y=sf::st_coordinates(.)[,2]) %>% 
+  sf::st_drop_geometry() %>% 
+  group_by(Date) %>% 
+    mutate(a=Kalman(X, Y, 4*Delta_dist/num, 0.5*New_dist)) %>% 
+    mutate(X2=a$X2,
+           Y2=a$Y2) %>% 
+  ungroup()
+
+df_kal <- df_kal %>% 
+  sf::st_drop_geometry() %>% 
+  sf::st_as_sf(coords=c("X2", "Y2"), crs=CityEPSG)
+
+l <- df_utm2 %>% 
+  group_by(Date) %>% 
+  summarize(do_union=FALSE) %>% 
+  sf::st_cast("LINESTRING")
+
+l2 <- df_kal %>% 
+  group_by(Date) %>% 
+  summarize(do_union=FALSE) %>% 
+  sf::st_cast("LINESTRING")
+
+tmap::tmap_options(basemaps="OpenStreetMap")
+
+tmap::tmap_mode("view") # set mode to interactive plots
+
+tmap::tm_shape(l) +
+  tmap::tm_lines() +
+tmap::tm_shape(l2) +
+  tmap::tm_lines(col="red") +
+tmap::tm_shape(df_utm2 %>% select(Date, elevation, num, waypt)) +
+  tmap::tm_dots(fill="blue", size=0.5) +
+tmap::tm_shape(df_utm3 %>% select(Date, elevation, num, waypt)) +
+  tmap::tm_dots(fill="red", size=0.5) +
+tmap::tm_shape(df_kal %>% select(Date, elevation, num, waypt)) +
+  tmap::tm_dots(fill="green", size=0.5)
+```
+
+##    Save cleaned data
+
+```{r}
+
+#   Remove extra NA's from waypt
+
+df_out <- df_kal %>% 
+  mutate(waypt=case_when(
+    num==1 ~ waypt,
+    .default = stringr::str_remove_all(waypt, ",NA|NA,")
+  ))
+
+#   Save file
+
+saveRDS(df_out, paste0(path, City, ".rds"))
+
+```
+
+
+
+
