@@ -55,7 +55,7 @@ delta_Dist <- function(df){
              Dy=Ytest - Y) %>% 
       mutate(Delta_dist=Eucl(Xtest, X, Ytest, Y)) %>% 
       mutate(New_dist=Eucl(lag(X, default=first(X)), lead(X, default=last(X)), 
-                           lag(Y, default=first(Y)), lead(Y, default=last(Y)))) %>% 
+                           lag(Y, default=first(Y)), lead(Y, default=last(Y)))/2) %>% 
     ungroup()
 }
 
@@ -294,7 +294,7 @@ df_utm2 %>%
 
 #   Big deltas
 
-Spike_pct <- 0.8
+Spike_pct <- 1.6
 
 df_delta <- df_utm2 %>% 
   filter(Delta_dist>Spike_pct*New_dist) %>% 
@@ -385,7 +385,6 @@ foo <- df_utm3 %>%
   select(Date, X, Y, num, Delta_dist, New_dist)
 
 get_change <- function(df1, df2) {
-  # df2 <- df2 %>% sf::st_drop_geometry() %>% select(X2, Y2)
   df1 <- df1 %>% sf::st_drop_geometry() %>% select(X, Y)
   foo <- cbind(df1, df2) %>% 
     mutate(Dx=abs(X-X2), Dy=abs(Y-Y2), Delta=Eucl(X, X2, Y, Y2))  %>% 
